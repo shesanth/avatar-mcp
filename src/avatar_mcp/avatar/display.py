@@ -148,16 +148,46 @@ _LOCK_FILE = Path.home() / ".claude" / "avatar-mcp.lock"
 _lock_fh = None  # held open for the process lifetime
 
 
-def _kill_stale_holder() -> None:
-    """Read the PID from the lock file and kill it if it's a stale avatar process."""
-    import signal
+def _lock_file(fh) -> bool:
+    """Acquire a non-blocking exclusive lock. Returns True on success."""
+    if sys.platform == "win32":
+        import msvcrt
+        msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+    else:
+        import fcntl
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    return True
+
+
+def _unlock_file(fh) -> None:
+    """Release the lock held on a file handle."""
+    if sys.platform == "win32":
+        import msvcrt
+        msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+    else:
+        import fcntl
+        fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+
+
+def _read_stale_pid() -> int | None:
+    """Read the PID from the lock file without truncating it."""
     try:
-        pid = int(_LOCK_FILE.read_text().strip())
-        os.kill(pid, signal.SIGTERM)
-        # give it a moment to die and release the lock
-        import time
-        time.sleep(0.5)
+        text = _LOCK_FILE.read_text().strip()
+        return int(text) if text else None
     except (ValueError, OSError, FileNotFoundError):
+        return None
+
+
+def _kill_stale_holder(pid: int | None) -> None:
+    """Kill a stale avatar display process by PID."""
+    if pid is None:
+        return
+    import signal
+    import time
+    try:
+        os.kill(pid, signal.SIGTERM)
+        time.sleep(0.5)
+    except OSError:
         pass
 
 
@@ -166,15 +196,16 @@ def _acquire_lock() -> bool:
 
     If a stale process holds the lock, kill it and retry.
     """
-    import msvcrt
-
     global _lock_fh
     _LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
 
+    # read stale PID BEFORE opening with "w" (which truncates the file)
+    stale_pid = _read_stale_pid()
+
     for attempt in range(2):
         try:
-            _lock_fh = open(_LOCK_FILE, "w+")
-            msvcrt.locking(_lock_fh.fileno(), msvcrt.LK_NBLCK, 1)
+            _lock_fh = open(_LOCK_FILE, "w")
+            _lock_file(_lock_fh)
             _lock_fh.write(str(os.getpid()))
             _lock_fh.flush()
             return True
@@ -183,7 +214,7 @@ def _acquire_lock() -> bool:
                 _lock_fh.close()
                 _lock_fh = None
             if attempt == 0:
-                _kill_stale_holder()
+                _kill_stale_holder(stale_pid)
             else:
                 return False
     return False
@@ -193,9 +224,8 @@ def _release_lock() -> None:
     global _lock_fh
     try:
         if _lock_fh:
-            import msvcrt
             try:
-                msvcrt.locking(_lock_fh.fileno(), msvcrt.LK_UNLCK, 1)
+                _unlock_file(_lock_fh)
             except OSError:
                 pass
             _lock_fh.close()

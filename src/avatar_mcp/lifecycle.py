@@ -53,9 +53,12 @@ class Lifecycle:
         # STT sender (always init, listener started on demand)
         self._sender = ClaudeCodeSender()
 
-        # auto-start listening if configured
+        # auto-start listening if configured — wrapped so STT failure doesn't kill the server
         if self.config.stt.enabled:
-            self.start_listening()
+            try:
+                self.start_listening()
+            except Exception as e:
+                log.error("STT auto-start failed (server continues without voice): %s", e)
 
     def stop_all(self) -> None:
         if self._stt:
