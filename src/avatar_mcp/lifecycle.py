@@ -25,6 +25,7 @@ class Lifecycle:
         self._tts: TTSEngine | None = None
         self._stt = None  # SpeechListener, lazily imported
         self._sender: ClaudeCodeSender | None = None
+        self._pose_gen: int = 0  # incremented on explicit set_pose, prevents speak on_done from clobbering
 
     def start_all(self) -> None:
         # guard against double-spawn
@@ -108,9 +109,13 @@ class Lifecycle:
 
         path = await self._tts.synthesize(text, emotion)
 
+        gen_at_speak = self._pose_gen
+
         def on_done():
-            # maintain the emotion-based pose after speaking, not just idle
-            self.state.set_many(pose=emotion_pose, is_speaking=False)
+            self.state.set("is_speaking", False)
+            # only restore emotion pose if no explicit set_pose happened since speak started
+            if self._pose_gen == gen_at_speak:
+                self.state.set("pose", emotion_pose)
 
         self._audio.set_on_complete(on_done)
         self._audio.add(path)
@@ -124,6 +129,7 @@ class Lifecycle:
         return f"Emotion set to {emotion} (pose: {pose})"
 
     def set_pose(self, pose: str) -> str:
+        self._pose_gen += 1
         self.state.set("pose", pose)
         return f"Pose set to {pose}"
 
