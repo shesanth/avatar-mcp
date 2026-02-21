@@ -30,13 +30,19 @@ class TTSConfig:
 @dataclass
 class STTConfig:
     enabled: bool = False
+    engine: str = "google"              # "google" or "realtime"
     language: str = "en-US"
     cooldown_seconds: float = 1.0
-    energy_threshold: int = 150
-    pause_threshold: float = 2.0       # seconds of silence before phrase is considered complete
-    phrase_threshold: float = 0.1       # minimum seconds of speech to register as a phrase
-    non_speaking_duration: float = 1.0  # seconds of silence to keep on both sides of recording
+    pause_threshold: float = 1.2        # seconds of silence before phrase is considered complete
     wake_words: list[str] = field(default_factory=lambda: ["claude", "hey claude"])
+    # google engine settings
+    energy_threshold: int = 150
+    phrase_threshold: float = 0.1       # minimum seconds of speech to register as a phrase
+    non_speaking_duration: float = 0.5  # silence buffer kept on both sides of recording
+    # realtime engine settings (faster-whisper)
+    realtime_model: str = "base"        # tiny / base / small / medium / large-v3
+    realtime_device: str = "cuda"       # "cuda" or "cpu"
+    realtime_silero_sensitivity: float = 0.4  # VAD sensitivity 0-1
 
 
 @dataclass

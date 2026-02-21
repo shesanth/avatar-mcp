@@ -90,6 +90,36 @@ class TestImportOrdering:
         pytest.fail("_init_tts() method not found")
 
 
+class TestSTTEngineSelection:
+    """_init_stt() must branch on config.stt.engine like _init_tts() does."""
+
+    def test_init_stt_exists(self):
+        source = LIFECYCLE.read_text()
+        tree = ast.parse(source)
+        methods = [
+            node.name for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef)
+        ]
+        assert "_init_stt" in methods, "_init_stt() method not found in lifecycle.py"
+
+    def test_init_stt_has_realtime_branch(self):
+        source = LIFECYCLE.read_text()
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == "_init_stt":
+                func_source = "\n".join(
+                    source.splitlines()[node.lineno - 1 : node.end_lineno]
+                )
+                assert "RealtimeSTTEngine" in func_source, (
+                    "_init_stt() must import RealtimeSTTEngine for the realtime branch"
+                )
+                assert "GoogleSTTEngine" in func_source, (
+                    "_init_stt() must import GoogleSTTEngine for the google branch"
+                )
+                return
+        pytest.fail("_init_stt() not found")
+
+
 class TestAddOnnxDllDir:
     """Tests for the _add_onnx_dll_dir helper in tts_kokoro."""
 

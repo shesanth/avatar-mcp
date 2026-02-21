@@ -20,6 +20,7 @@ dependencies = [
 [project.optional-dependencies]
 premium = ["elevenlabs>=1.0.0"]
 japanese = ["misaki[ja]"]
+realtime-stt = ["RealtimeSTT>=0.3.0"]
 dev = ["pytest>=7.0.0"]
 
 [project.scripts]

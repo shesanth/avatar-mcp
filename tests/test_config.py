@@ -25,11 +25,15 @@ class TestDefaults:
     def test_stt_defaults(self):
         c = STTConfig()
         assert c.enabled is False
+        assert c.engine == "google"
         assert c.language == "en-US"
-        assert c.pause_threshold == 2.0
+        assert c.pause_threshold == 1.2
         assert c.phrase_threshold == 0.1
-        assert c.non_speaking_duration == 1.0
+        assert c.non_speaking_duration == 0.5
         assert "claude" in c.wake_words
+        assert c.realtime_model == "base"
+        assert c.realtime_device == "cuda"
+        assert c.realtime_silero_sensitivity == 0.4
 
     def test_behavior_defaults(self):
         c = BehaviorConfig()

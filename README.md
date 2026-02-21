@@ -11,7 +11,9 @@ Runs as an [MCP server](https://modelcontextprotocol.io/) — Claude Code connec
   - **Kokoro** (default) — Free, local, runs via ONNX runtime. Auto-downloads ~350MB model on first use
   - **Edge TTS** — Free, uses Microsoft's neural voices, requires internet
   - **ElevenLabs** — Premium quality, requires API key
-- **Speech-to-text** — Voice input via Google Speech API. Supports wake words so it can stay hot while you talk to other people
+- **Speech-to-text** — Voice input with two engines:
+  - **RealtimeSTT** (recommended) — Local Whisper model via faster-whisper, GPU-accelerated, real-time streaming, no API keys
+  - **Google Speech API** — Cloud-based fallback, no GPU required, higher latency
 - **Emotion system** — 8 emotions (neutral, happy, sad, excited, angry, shy, smug, bratty) that affect avatar pose and voice prosody
 
 ## Setup
@@ -28,6 +30,13 @@ Runs as an [MCP server](https://modelcontextprotocol.io/) — Claude Code connec
 git clone <this-repo>
 cd avatar-mcp
 pip install -e .
+```
+
+For RealtimeSTT (local Whisper, recommended if you have a GPU):
+```bash
+pip install -e ".[realtime-stt]"
+# For CUDA acceleration (replace cu128 with your CUDA version):
+pip install --force-reinstall torch torchaudio --index-url https://download.pytorch.org/whl/cu128
 ```
 
 For ElevenLabs support:
@@ -96,14 +105,20 @@ elevenlabs_voice_id = ""
 elevenlabs_model = "eleven_flash_v2_5"
 
 [stt]
-enabled = false
+enabled = true
+engine = "realtime"            # "google" or "realtime" (local whisper)
 language = "en-US"
-cooldown_seconds = 1.0
-energy_threshold = 150
-pause_threshold = 2.0
-phrase_threshold = 0.1
-non_speaking_duration = 1.0
+cooldown_seconds = 3.0
+pause_threshold = 1.2
 wake_words = ["claude", "hey claude"]
+# realtime engine (faster-whisper via RealtimeSTT)
+realtime_model = "base"        # tiny / base / small / medium / large-v3
+realtime_device = "cuda"       # "cuda" or "cpu"
+realtime_silero_sensitivity = 0.4
+# google engine (fallback)
+energy_threshold = 150
+phrase_threshold = 0.1
+non_speaking_duration = 0.5
 
 [behavior]
 auto_speak = true
@@ -155,6 +170,12 @@ Then set `sprite_directory = "path/to/my-sprites"` in `config.toml`.
 
 Speech-to-text uses wake word activation by default. Say **"Claude"** or **"Hey Claude"** followed by your message. Text is injected into Claude Code's input as `[VOICE]` messages.
 
+### STT Engines
+
+**RealtimeSTT** (recommended) — Uses faster-whisper for local, GPU-accelerated transcription. Streams results in real-time with built-in Silero VAD. No network calls, no API keys, no truncation. Requires `pip install -e ".[realtime-stt]"` and CUDA-enabled PyTorch.
+
+**Google Speech API** (fallback) — Cloud-based, works without a GPU but has higher latency and may drop long utterances. Set `engine = "google"` in config to use.
+
 Configure wake words in `config.toml` under `[stt]`. Set `wake_words = []` to disable filtering (all speech passes through).
 
 ## Running Tests
@@ -182,7 +203,9 @@ src/avatar_mcp/
     tts_eleven.py    # ElevenLabs TTS (premium)
     audio.py         # Playback queue
     emotions.py      # Emotion → prosody mapping
-    stt.py           # Speech-to-text with wake words
+    stt_base.py      # Abstract STT engine interface
+    stt_google.py    # Google Speech API (cloud fallback)
+    stt_realtime.py  # RealtimeSTT / faster-whisper (local, GPU)
   input/
     sender.py        # Injects voice text into Claude Code via clipboard
 ```

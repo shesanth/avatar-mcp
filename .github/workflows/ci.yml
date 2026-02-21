@@ -18,5 +18,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+      - name: Install system deps (Ubuntu)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y portaudio19-dev
       - run: pip install -e ".[dev]"
       - run: pytest tests/ -v --ignore=tests/test_avatar_standalone.py

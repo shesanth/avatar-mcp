@@ -136,20 +136,27 @@ class Lifecycle:
         if self._stt and self._stt.is_running:
             return "Already listening"
 
-        from .voice.stt import SpeechListener
-        self._stt = SpeechListener(
-            config=self.config.stt,
-            on_text=self._sender.send,
-        )
+        self._stt = self._init_stt()
         self._stt.start()
-        self.state.set_many(is_listening=True, pose="listening")
+        self.state.set("is_listening", True)
         return "Listening started — speak into your microphone. Text will be injected as [VOICE] messages."
+
+    def _init_stt(self):
+        engine = self.config.stt.engine
+        if engine == "realtime":
+            from .voice.stt_realtime import RealtimeSTTEngine
+            log.info("Using RealtimeSTT (model=%s, device=%s)", self.config.stt.realtime_model, self.config.stt.realtime_device)
+            return RealtimeSTTEngine(self.config.stt, self._sender.send)
+        else:
+            from .voice.stt_google import GoogleSTTEngine
+            log.info("Using Google Speech STT")
+            return GoogleSTTEngine(self.config.stt, self._sender.send)
 
     def stop_listening(self) -> str:
         if self._stt:
             self._stt.stop()
             self._stt = None
-        self.state.set_many(is_listening=False, pose="idle")
+        self.state.set("is_listening", False)
         return "Listening stopped"
 
     async def set_voice(self, voice_id: str, engine: str | None = None) -> str:

@@ -15,14 +15,20 @@ elevenlabs_voice_id = ""
 elevenlabs_model = "eleven_flash_v2_5"
 
 [stt]
-enabled = false
+enabled = true
+engine = "realtime"            # "google" or "realtime" (local whisper)
 language = "en-US"
-cooldown_seconds = 1.0
-energy_threshold = 150
-pause_threshold = 2.0          # seconds of silence before phrase is considered complete
-phrase_threshold = 0.1         # minimum seconds of speech to register
-non_speaking_duration = 1.0    # silence buffer kept on both sides of recording
+cooldown_seconds = 3.0
+pause_threshold = 1.2          # seconds of silence before phrase is considered complete
 wake_words = ["claude", "hey claude"]
+# realtime engine (faster-whisper via RealtimeSTT)
+realtime_model = "base"        # tiny / base / small / medium / large-v3
+realtime_device = "cuda"       # "cuda" or "cpu"
+realtime_silero_sensitivity = 0.4
+# google engine (fallback — ignored when engine = "realtime")
+energy_threshold = 150
+phrase_threshold = 0.1
+non_speaking_duration = 0.5
 
 [behavior]
 auto_speak = true
