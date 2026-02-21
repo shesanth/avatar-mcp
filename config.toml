@@ -7,8 +7,9 @@ sprite_directory = ""  # empty = use built-in placeholder sprites
 poll_interval_ms = 50
 
 [tts]
-engine = "edge"  # "edge" or "elevenlabs"
-voice = "ja-JP-NanamiNeural"
+engine = "kokoro"  # "edge", "kokoro", or "elevenlabs"
+voice = "jf_alpha"
+kokoro_lang = "en-us"
 elevenlabs_api_key = ""
 elevenlabs_voice_id = ""
 elevenlabs_model = "eleven_flash_v2_5"
@@ -16,8 +17,12 @@ elevenlabs_model = "eleven_flash_v2_5"
 [stt]
 enabled = false
 language = "en-US"
-cooldown_seconds = 2.0
-energy_threshold = 300
+cooldown_seconds = 1.0
+energy_threshold = 150
+pause_threshold = 2.0          # seconds of silence before phrase is considered complete
+phrase_threshold = 0.1         # minimum seconds of speech to register
+non_speaking_duration = 1.0    # silence buffer kept on both sides of recording
+wake_words = ["claude", "hey claude"]
 
 [behavior]
 auto_speak = true

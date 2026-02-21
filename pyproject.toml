@@ -1,12 +1,14 @@
 [project]
-name = "claude-avatar"
+name = "avatar-mcp"
 version = "0.1.0"
-description = "Desktop anime avatar companion MCP server for Claude Code"
+description = "Desktop avatar companion MCP server for Claude Code"
 requires-python = ">=3.11"
 dependencies = [
     "mcp[cli]>=1.0.0",
     "PyQt6>=6.6.0",
     "edge-tts>=6.1.0",
+    "kokoro-onnx>=0.5.0",
+    "soundfile>=0.12.0",
     "SpeechRecognition>=3.10.0",
     "PyAudio>=0.2.14",
     "pygame>=2.5.0",
@@ -17,13 +19,15 @@ dependencies = [
 
 [project.optional-dependencies]
 premium = ["elevenlabs>=1.0.0"]
+japanese = ["misaki[ja]"]
+dev = ["pytest>=7.0.0"]
 
 [project.scripts]
-claude-avatar = "claude_avatar.server:main"
+avatar-mcp = "avatar_mcp.server:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/claude_avatar"]
+packages = ["src/avatar_mcp"]

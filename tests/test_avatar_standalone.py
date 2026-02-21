@@ -1,7 +1,7 @@
 """Standalone avatar display test — run this to verify the overlay window works.
 
 Usage: python -m tests.test_avatar_standalone
-(from the claude-avatar directory)
+(from the avatar-mcp directory)
 """
 
 import multiprocessing
@@ -11,10 +11,10 @@ import time
 # add src to path
 sys.path.insert(0, "src")
 
-from claude_avatar.avatar.display import run_avatar_display
-from claude_avatar.avatar.sprites import ensure_all_placeholders
-from claude_avatar.config import AvatarConfig
-from claude_avatar.state import SharedState
+from avatar_mcp.avatar.display import run_avatar_display
+from avatar_mcp.avatar.sprites import ensure_all_placeholders
+from avatar_mcp.config import AvatarConfig
+from avatar_mcp.state import SharedState
 
 
 def main():
