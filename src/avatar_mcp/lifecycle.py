@@ -53,6 +53,10 @@ class Lifecycle:
         # STT sender (always init, listener started on demand)
         self._sender = ClaudeCodeSender()
 
+        # auto-start listening if configured
+        if self.config.stt.enabled:
+            self.start_listening()
+
     def stop_all(self) -> None:
         if self._stt:
             try:

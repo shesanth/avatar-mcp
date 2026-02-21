@@ -45,6 +45,7 @@ class SpeechListener:
         self._stop_fn: Callable | None = None
         self._muted = False
         self._last_time = 0.0
+        self._last_text = ""
 
     def start(self) -> None:
         with self._mic as source:
@@ -80,12 +81,18 @@ class SpeechListener:
             if not text or not text.strip():
                 return
 
-            self._last_time = now
-
             # wake word filtering
             message = _check_wake_word(text.strip(), self._config.wake_words)
             if message is None:
                 return  # not talking to us
+
+            # deduplicate — Google Speech sometimes fires twice for the same phrase
+            if message == self._last_text and now - self._last_time < 5.0:
+                log.debug("Dropping duplicate voice input: %s", message[:50])
+                return
+
+            self._last_time = now
+            self._last_text = message
 
             log.info("Voice input accepted: %s", message[:80])
             self._on_text(message)
