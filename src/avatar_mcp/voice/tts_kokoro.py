@@ -47,6 +47,28 @@ _VOICE_TO_LANG = {
 }
 
 
+def _add_onnx_dll_dir() -> None:
+    """Windows: add onnxruntime's capi dir to DLL search path.
+
+    When spawned by a non-Python parent (e.g. Claude Code / Node.js),
+    the DLL search path may not include onnxruntime's native libraries.
+    """
+    import os
+    import sys
+
+    if sys.platform != "win32":
+        return
+    try:
+        import importlib.util
+
+        spec = importlib.util.find_spec("onnxruntime.capi")
+        if spec and spec.submodule_search_locations:
+            for loc in spec.submodule_search_locations:
+                os.add_dll_directory(loc)
+    except Exception:
+        pass
+
+
 def _download_safe(url: str, dest: Path, label: str) -> None:
     """Download to a temp file, then atomically rename. Prevents corrupt partial downloads."""
     import socket
@@ -90,6 +112,7 @@ class KokoroTTSEngine(TTSEngine):
 
     def _get_kokoro(self):
         if self._kokoro is None:
+            _add_onnx_dll_dir()
             from kokoro_onnx import Kokoro
             model_path, voices_path = _ensure_models()
             self._kokoro = Kokoro(model_path, voices_path)
