@@ -1,0 +1,23 @@
+[avatar]
+start_visible = true
+start_x = 100
+start_y = 100
+sprite_scale = 1.0
+sprite_directory = ""  # empty = use built-in placeholder sprites
+poll_interval_ms = 50
+
+[tts]
+engine = "edge"  # "edge" or "elevenlabs"
+voice = "ja-JP-NanamiNeural"
+elevenlabs_api_key = ""
+elevenlabs_voice_id = ""
+elevenlabs_model = "eleven_flash_v2_5"
+
+[stt]
+enabled = false
+language = "en-US"
+cooldown_seconds = 2.0
+energy_threshold = 300
+
+[behavior]
+auto_speak = true
