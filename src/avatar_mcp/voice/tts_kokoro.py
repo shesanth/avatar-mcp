@@ -52,6 +52,8 @@ def _add_onnx_dll_dir() -> None:
 
     When spawned by a non-Python parent (e.g. Claude Code / Node.js),
     the DLL search path may not include onnxruntime's native libraries.
+    We add via both PATH (traditional search) and os.add_dll_directory
+    (modern search) to cover all loading modes.
     """
     import os
     import sys
@@ -61,10 +63,15 @@ def _add_onnx_dll_dir() -> None:
     try:
         import importlib.util
 
-        spec = importlib.util.find_spec("onnxruntime.capi")
+        spec = importlib.util.find_spec("onnxruntime")
         if spec and spec.submodule_search_locations:
             for loc in spec.submodule_search_locations:
-                os.add_dll_directory(loc)
+                capi = os.path.join(loc, "capi")
+                if os.path.isdir(capi):
+                    os.add_dll_directory(capi)
+                    # Also prepend to PATH for loaders that use traditional search
+                    if capi not in os.environ.get("PATH", ""):
+                        os.environ["PATH"] = capi + os.pathsep + os.environ.get("PATH", "")
     except Exception:
         pass
 
@@ -157,21 +164,11 @@ class KokoroTTSEngine(TTSEngine):
 
     @staticmethod
     def _clean_and_emote(text: str, emotion: str) -> str:
-        """Strip markdown, add stage directions for emotion."""
+        """Strip markdown. Kokoro has no stage direction support — emotion
+        is controlled purely through voice selection and blending."""
         text = re.sub(r"```[\s\S]*?```", "", text)
         text = re.sub(r"`[^`]+`", "", text)
         text = re.sub(r"[*_~#>|]", "", text)
         text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
         text = re.sub(r"\s+", " ", text).strip()
-        text = text[:500]
-
-        prefixes = {
-            "angry": "*irritated* ",
-            "shy": "*quietly, embarrassed* ",
-            "happy": "*cheerfully* ",
-            "excited": "*excitedly* ",
-            "sad": "*sadly, softly* ",
-            "smug": "*smugly, confidently* ",
-            "bratty": "*bratty* ",
-        }
-        return prefixes.get(emotion, "") + text
+        return text[:500]

@@ -50,26 +50,26 @@ class TestKokoroCleanAndEmote:
         assert "Use" in result
         assert "here" in result
 
-    def test_adds_emotion_prefix(self):
+    def test_no_emotion_prefix(self):
+        """Kokoro doesn't support stage directions — emotions must not add prefixes."""
         result = KokoroTTSEngine._clean_and_emote("Hello", "angry")
-        assert result.startswith("*irritated*")
+        assert result == "Hello"
 
     def test_neutral_no_prefix(self):
         result = KokoroTTSEngine._clean_and_emote("Hello", "neutral")
         assert result == "Hello"
 
-    def test_all_emotions_have_prefix(self):
-        emotions_with_prefix = ["angry", "shy", "happy", "excited", "sad", "smug", "bratty"]
-        for emotion in emotions_with_prefix:
+    def test_no_emotion_adds_spoken_text(self):
+        """No emotion should inject words that get spoken aloud."""
+        all_emotions = ["angry", "shy", "happy", "excited", "sad", "smug", "bratty", "neutral"]
+        for emotion in all_emotions:
             result = KokoroTTSEngine._clean_and_emote("test", emotion)
-            assert result.startswith("*"), f"No prefix for emotion: {emotion}"
+            assert result == "test", f"Emotion '{emotion}' modified the text to: {result}"
 
-    def test_caps_at_500_before_prefix(self):
+    def test_caps_at_500(self):
         text = "a" * 1000
         result = KokoroTTSEngine._clean_and_emote(text, "happy")
-        # prefix + 500 chars of text
-        assert len(result) > 500  # prefix adds to it
-        assert result.startswith("*cheerfully*")
+        assert len(result) == 500
 
 
 class TestElevenLabsEmotionContext:

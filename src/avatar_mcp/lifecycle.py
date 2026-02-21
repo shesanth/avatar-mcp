@@ -6,7 +6,6 @@ import logging
 import multiprocessing
 from pathlib import Path
 
-from .avatar.display import run_avatar_display
 from .config import AppConfig
 from .input.sender import ClaudeCodeSender
 from .state import EMOTION_POSE_MAP, SharedState
@@ -33,7 +32,16 @@ class Lifecycle:
             log.warning("Avatar process already running, skipping spawn")
             return
 
-        # avatar display in child process
+        # audio queue
+        self._audio = AudioQueue()
+
+        # TTS engine — must init before PyQt6 is imported, as Qt6's DLLs
+        # on Windows poison the loader and break onnxruntime initialization
+        self._init_tts()
+
+        # avatar display in child process (lazy import keeps PyQt6 out until needed)
+        from .avatar.display import run_avatar_display
+
         self._avatar_proc = multiprocessing.Process(
             target=run_avatar_display,
             args=(self.state, self.config.avatar),
@@ -41,12 +49,6 @@ class Lifecycle:
         )
         self._avatar_proc.start()
         log.info("Avatar display started (pid=%s)", self._avatar_proc.pid)
-
-        # audio queue
-        self._audio = AudioQueue()
-
-        # TTS engine
-        self._init_tts()
 
         # STT sender (always init, listener started on demand)
         self._sender = ClaudeCodeSender()
@@ -79,7 +81,9 @@ class Lifecycle:
             )
             log.info("Using ElevenLabs TTS")
         elif engine == "kokoro":
-            from .voice.tts_kokoro import KokoroTTSEngine
+            from .voice.tts_kokoro import KokoroTTSEngine, _add_onnx_dll_dir
+            _add_onnx_dll_dir()
+            import onnxruntime  # noqa: F401 — must load before PyQt6 poisons DLL search
             self._tts = KokoroTTSEngine(
                 voice=self.config.tts.voice,
                 lang_override=self.config.tts.kokoro_lang,
