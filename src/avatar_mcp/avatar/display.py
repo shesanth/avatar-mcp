@@ -148,25 +148,45 @@ _LOCK_FILE = Path.home() / ".claude" / "avatar-mcp.lock"
 _lock_fh = None  # held open for the process lifetime
 
 
+def _kill_stale_holder() -> None:
+    """Read the PID from the lock file and kill it if it's a stale avatar process."""
+    import signal
+    try:
+        pid = int(_LOCK_FILE.read_text().strip())
+        os.kill(pid, signal.SIGTERM)
+        # give it a moment to die and release the lock
+        import time
+        time.sleep(0.5)
+    except (ValueError, OSError, FileNotFoundError):
+        pass
+
+
 def _acquire_lock() -> bool:
-    """Ensure only one avatar display runs at a time using OS-level file locking."""
+    """Ensure only one avatar display runs at a time using OS-level file locking.
+
+    If a stale process holds the lock, kill it and retry.
+    """
     import msvcrt
 
     global _lock_fh
     _LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
 
-    try:
-        _lock_fh = open(_LOCK_FILE, "w")
-        msvcrt.locking(_lock_fh.fileno(), msvcrt.LK_NBLCK, 1)
-        _lock_fh.write(str(os.getpid()))
-        _lock_fh.flush()
-        return True
-    except (OSError, IOError):
-        # another instance holds the lock
-        if _lock_fh:
-            _lock_fh.close()
-            _lock_fh = None
-        return False
+    for attempt in range(2):
+        try:
+            _lock_fh = open(_LOCK_FILE, "w+")
+            msvcrt.locking(_lock_fh.fileno(), msvcrt.LK_NBLCK, 1)
+            _lock_fh.write(str(os.getpid()))
+            _lock_fh.flush()
+            return True
+        except (OSError, IOError):
+            if _lock_fh:
+                _lock_fh.close()
+                _lock_fh = None
+            if attempt == 0:
+                _kill_stale_holder()
+            else:
+                return False
+    return False
 
 
 def _release_lock() -> None:
