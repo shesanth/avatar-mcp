@@ -104,7 +104,8 @@ class Lifecycle:
     # --- public API for MCP tools ---
 
     async def speak(self, text: str, emotion: str) -> str:
-        emotion_pose = EMOTION_POSE_MAP.get(emotion, "idle")
+        # remember what we were doing before speaking so we can resume it
+        pre_speak_pose = self.state.get("pose")
         self.state.set_many(pose="speaking", emotion=emotion, is_speaking=True)
 
         path = await self._tts.synthesize(text, emotion)
@@ -113,9 +114,9 @@ class Lifecycle:
 
         def on_done():
             self.state.set("is_speaking", False)
-            # only restore emotion pose if no explicit set_pose happened since speak started
+            # restore pre-speak pose unless an explicit set_pose happened during speech
             if self._pose_gen == gen_at_speak:
-                self.state.set("pose", emotion_pose)
+                self.state.set("pose", pre_speak_pose)
 
         self._audio.set_on_complete(on_done)
         self._audio.add(path)
