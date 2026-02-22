@@ -14,7 +14,11 @@ Runs as an [MCP server](https://modelcontextprotocol.io/) — Claude Code connec
 - **Speech-to-text** — Voice input with two engines:
   - **RealtimeSTT** (recommended) — Local Whisper model via faster-whisper, GPU-accelerated, real-time streaming, no API keys
   - **Google Speech API** — Cloud-based fallback, no GPU required, higher latency
-- **Emotion system** — 8 emotions (neutral, happy, sad, excited, angry, shy, smug, bratty) that affect avatar pose and voice prosody
+- **Emotion system** — 7 emotions (neutral, happy, sad, excited, angry, shy, smug) that affect avatar pose and voice prosody
+
+## Why?
+
+Claude Code runs in a terminal — if you alt-tab away, switch monitors, or just glance at another screen, you lose all visual feedback. The avatar sits on top of everything so you always know what Claude is doing: coding, thinking, speaking, or waiting for input. Useful for multi-monitor setups, long-running tasks, and voice-driven workflows where the terminal isn't in focus.
 
 ## Setup
 
@@ -141,7 +145,7 @@ Once connected, Claude Code has access to these tools:
 | `list_voices(engine)` | List available voices |
 
 ### Emotions
-`neutral`, `happy`, `sad`, `excited`, `angry`, `shy`, `smug`, `bratty`
+`neutral`, `happy`, `sad`, `excited`, `angry`, `shy`, `smug`
 
 ### Poses
 `idle`, `thinking`, `coding`, `angry`, `smug`, `shy`, `planning`, `speaking`, `listening`, `drag`
