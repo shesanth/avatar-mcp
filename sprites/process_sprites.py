@@ -22,7 +22,7 @@ from PIL import Image
 # Target size for all sprites (square, transparency-padded)
 TARGET_SIZE = 400
 
-# Valid pose names — files must be named {pose}.png
+# Valid pose names -- files must be named {pose}.png
 VALID_POSES = {
     "idle", "thinking", "coding", "angry", "smug",
     "shy", "planning", "speaking", "listening", "drag",
@@ -63,7 +63,7 @@ def remove_background_threshold(img: Image.Image, threshold: int = 240) -> Image
 
 
 def remove_background(img: Image.Image, use_rembg: bool = False) -> Image.Image:
-    """Remove background — dispatch to rembg or threshold."""
+    """Remove background -- dispatch to rembg or threshold."""
     if use_rembg:
         return remove_background_rembg(img)
     return remove_background_threshold(img)
@@ -102,7 +102,7 @@ def pad_to_square(img: Image.Image, target: int) -> Image.Image:
 
 
 def process_sprite(input_path: Path, output_path: Path, use_rembg: bool = False) -> None:
-    """Full pipeline: remove bg → crop → pad to square → save."""
+    """Full pipeline: remove bg -> crop -> pad to square -> save."""
     img = Image.open(input_path).convert("RGBA")
     img = remove_background(img, use_rembg=use_rembg)
     img = auto_crop(img)

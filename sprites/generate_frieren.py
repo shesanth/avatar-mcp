@@ -1,8 +1,8 @@
 """Generate Frieren avatar sprites using NoobAI-XL Cyberfix.
 
 Two batches:
-  1. artist:abe_tsukasa — manga-accurate style
-  2. artist:nat_the_lich + artist:morry — stylized alt
+  1. artist:abe_tsukasa -- manga-accurate style
+  2. artist:nat_the_lich + artist:morry -- stylized alt
 
 Usage:
     python sprites/generate_frieren.py
@@ -47,11 +47,11 @@ ARTIST_TAGS = {
 POSE_PROMPTS: dict[str, str] = {
     "idle":      "relaxed, gentle smile, hands clasped, looking at viewer",
     "thinking":  "finger on chin, looking up, tilted head, curious expression",
-    "coding":    "reading book, holding book, focused, looking down",
+    "coding":    "holding staff, both hands, casting spell, magic circle, concentrated",
     "angry":     "angry, clenched fist, furrowed brows, pouting, blush",
     "smug":      "smug, closed eyes, hand on hip, smirk, confident",
     "shy":       "blushing, hands covering face, looking away, embarrassed",
-    "planning":  "holding pen, writing in notebook, looking down, concentrated",
+    "planning":  "reading book, holding book, focused, looking down",
     "speaking":  "open mouth, pointing finger, gesturing, energetic",
     "listening": "hand to ear, cupping ear, head tilted, attentive, curious",
     "drag":      "arms raised, startled, wide eyes, open mouth, flailing",
@@ -67,6 +67,11 @@ FP16_VAE_REPO = "madebyollin/sdxl-vae-fp16-fix"
 
 
 def load_pipeline(model_path: str | None = None) -> StableDiffusionXLPipeline:
+    if not torch.cuda.is_available():
+        print("ERROR: CUDA is required for sprite generation.")
+        print("Install PyTorch with CUDA: https://pytorch.org/get-started/locally/")
+        raise SystemExit(1)
+
     if model_path:
         local_path = model_path
     else:
@@ -75,7 +80,7 @@ def load_pipeline(model_path: str | None = None) -> StableDiffusionXLPipeline:
         local_path = hf_hub_download(repo_id=CYBERFIX_REPO, filename=CYBERFIX_FILE)
 
     print(f"Loading model: {local_path}")
-    from diffusers import AutoencoderKL
+    from diffusers import AutoencoderKL  # lazy: avoid import if CUDA check fails above
     vae = AutoencoderKL.from_pretrained(FP16_VAE_REPO, torch_dtype=torch.float16)
 
     pipe = StableDiffusionXLPipeline.from_single_file(
