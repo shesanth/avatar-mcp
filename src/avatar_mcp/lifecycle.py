@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import logging
 import multiprocessing
+import os
+import shutil
+import sys
+import tempfile
 from pathlib import Path
 
 from .config import AppConfig
@@ -16,6 +20,225 @@ from .voice.tts_edge import EdgeTTSEngine
 log = logging.getLogger("avatar-mcp")
 
 
+def _is_parent_alive(pid: int) -> bool:
+    """Check if a process is alive. Cross-platform.
+
+    On Windows, uses ctypes OpenProcess + GetExitCodeProcess (safe).
+    On Unix, uses os.kill(pid, 0) (signal 0 = existence check).
+    """
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            kernel32 = ctypes.windll.kernel32
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            STILL_ACTIVE = 259
+            handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+            if not handle:
+                return False
+            exit_code = ctypes.c_ulong()
+            result = kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code))
+            kernel32.CloseHandle(handle)
+            return result != 0 and exit_code.value == STILL_ACTIVE
+        except Exception:
+            return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def _clean_stale_temp_dirs() -> None:
+    """Remove leftover avatar_mcp temp dirs from previous sessions."""
+    tmp = Path(tempfile.gettempdir())
+    for prefix in ("avatar_mcp_tts_", "avatar_mcp_kokoro_", "avatar_mcp_eleven_"):
+        for d in tmp.glob(f"{prefix}*"):
+            try:
+                shutil.rmtree(d)
+            except OSError:
+                pass
+
+
+_job_handle = None  # Windows Job Object handle, kept alive for process lifetime
+
+
+def _create_job_object():
+    """Create a Windows Job Object that kills all assigned processes on close.
+
+    Returns the job handle, or None on non-Windows / failure.
+    """
+    if sys.platform != "win32":
+        return None
+
+    try:
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+
+        job = kernel32.CreateJobObjectW(None, None)
+        if not job:
+            return None
+
+        class JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+            _fields_ = [
+                ("PerProcessUserTimeLimit", ctypes.c_int64),
+                ("PerJobUserTimeLimit", ctypes.c_int64),
+                ("LimitFlags", ctypes.c_uint32),
+                ("MinimumWorkingSetSize", ctypes.c_size_t),
+                ("MaximumWorkingSetSize", ctypes.c_size_t),
+                ("ActiveProcessLimit", ctypes.c_uint32),
+                ("Affinity", ctypes.c_size_t),
+                ("PriorityClass", ctypes.c_uint32),
+                ("SchedulingClass", ctypes.c_uint32),
+            ]
+
+        class IO_COUNTERS(ctypes.Structure):
+            _fields_ = [
+                ("ReadOperationCount", ctypes.c_uint64),
+                ("WriteOperationCount", ctypes.c_uint64),
+                ("OtherOperationCount", ctypes.c_uint64),
+                ("ReadTransferCount", ctypes.c_uint64),
+                ("WriteTransferCount", ctypes.c_uint64),
+                ("OtherTransferCount", ctypes.c_uint64),
+            ]
+
+        class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+            _fields_ = [
+                ("BasicLimitInformation", JOBOBJECT_BASIC_LIMIT_INFORMATION),
+                ("IoInfo", IO_COUNTERS),
+                ("ProcessMemoryLimit", ctypes.c_size_t),
+                ("JobMemoryLimit", ctypes.c_size_t),
+                ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                ("PeakJobMemoryUsed", ctypes.c_size_t),
+            ]
+
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
+
+        info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+
+        ok = kernel32.SetInformationJobObject(
+            job, 9, ctypes.byref(info), ctypes.sizeof(info),
+        )
+        if not ok:
+            kernel32.CloseHandle(job)
+            return None
+
+        log.info("Job Object created for child process cleanup")
+        return job
+    except Exception:
+        return None
+
+
+_PID_FILE = Path.home() / ".claude" / "avatar-mcp.pids"
+
+
+def _assign_to_job(pid: int) -> None:
+    """Assign a process to the kill-on-close Job Object by PID."""
+    global _job_handle
+    if _job_handle is None or sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        PROCESS_SET_QUOTA = 0x0100
+        PROCESS_TERMINATE = 0x0001
+        handle = kernel32.OpenProcess(
+            PROCESS_SET_QUOTA | PROCESS_TERMINATE, False, pid,
+        )
+        if handle:
+            ok = kernel32.AssignProcessToJobObject(_job_handle, handle)
+            err = kernel32.GetLastError() if not ok else 0
+            kernel32.CloseHandle(handle)
+            if ok:
+                log.info("Assigned pid=%d to Job Object", pid)
+            else:
+                log.warning("Failed to assign pid=%d to Job Object (error=%d)", pid, err)
+        else:
+            log.warning("OpenProcess failed for pid=%d (error=%d)", pid, kernel32.GetLastError())
+    except Exception as e:
+        log.warning("Job Object assignment exception for pid=%d: %s", pid, e)
+
+
+def _assign_all_children() -> None:
+    """Assign ALL child processes to the Job Object and record PIDs to a file.
+
+    Called after start_all() so RealtimeSTT and other libraries have finished
+    spawning their workers. Uses multiprocessing.active_children() to catch
+    everything — Manager, avatar display, STT workers, etc.
+    """
+    children = multiprocessing.active_children()
+    pids = [c.pid for c in children if c.pid is not None]
+
+    # assign each to the Windows Job Object (noop on Unix)
+    for pid in pids:
+        _assign_to_job(pid)
+
+    # write PID file as cross-platform fallback
+    _PID_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _PID_FILE.write_text("\n".join(str(p) for p in pids))
+    log.info("Tracking %d child processes: %s", len(pids), pids)
+
+
+def _kill_stale_pids() -> None:
+    """Kill leftover child processes from a previous session using the PID file.
+
+    Called on startup BEFORE spawning new processes.
+    """
+    if not _PID_FILE.exists():
+        log.info("No stale PID file found — clean start")
+        return
+
+    raw = _PID_FILE.read_text()
+    log.info("Found stale PID file with contents: %s", raw.strip())
+    killed = 0
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            pid = int(line)
+        except ValueError:
+            continue
+
+        if pid == os.getpid():
+            continue
+
+        alive = _is_parent_alive(pid)
+        if not alive:
+            log.info("Stale pid=%d already dead, skipping", pid)
+            continue
+
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                kernel32 = ctypes.windll.kernel32
+                handle = kernel32.OpenProcess(0x0001, False, pid)  # PROCESS_TERMINATE
+                if handle:
+                    ok = kernel32.TerminateProcess(handle, 1)
+                    kernel32.CloseHandle(handle)
+                    if ok:
+                        log.info("Killed stale pid=%d", pid)
+                        killed += 1
+                    else:
+                        log.warning("TerminateProcess failed for pid=%d", pid)
+                else:
+                    log.warning("OpenProcess(TERMINATE) failed for pid=%d", pid)
+            except Exception as e:
+                log.warning("Exception killing stale pid=%d: %s", pid, e)
+        else:
+            try:
+                import signal
+                os.kill(pid, signal.SIGTERM)
+                log.info("Sent SIGTERM to stale pid=%d", pid)
+                killed += 1
+            except OSError as e:
+                log.warning("Failed to kill stale pid=%d: %s", pid, e)
+
+    _PID_FILE.unlink(missing_ok=True)
+    if killed:
+        log.info("Killed %d stale processes from previous session", killed)
+
+
 class Lifecycle:
     def __init__(self, config: AppConfig, state: SharedState):
         self.config = config
@@ -26,12 +249,19 @@ class Lifecycle:
         self._stt = None  # SpeechListener, lazily imported
         self._sender: ClaudeCodeSender | None = None
         self._pose_gen: int = 0  # incremented on explicit set_pose, prevents speak on_done from clobbering
+        self._stopped = False
 
     def start_all(self) -> None:
         # guard against double-spawn
         if self._avatar_proc is not None and self._avatar_proc.is_alive():
             log.warning("Avatar process already running, skipping spawn")
             return
+
+        _kill_stale_pids()
+        _clean_stale_temp_dirs()
+
+        global _job_handle
+        _job_handle = _create_job_object()
 
         # audio queue
         self._audio = AudioQueue()
@@ -62,21 +292,38 @@ class Lifecycle:
                 log.error("STT auto-start failed (server continues without voice): %s", e)
 
     def stop_all(self) -> None:
+        if self._stopped:
+            return
+        self._stopped = True
+
+        # STT first — may have non-daemon threads (RealtimeSTT internals)
         if self._stt:
             try:
                 self._stt.stop()
             except Exception:
                 pass
+            self._stt = None
 
+        # stop audio playback and pygame mixer
         if self._audio:
-            self._audio.clear()
+            try:
+                self._audio.shutdown()
+            except Exception:
+                pass
+            self._audio = None
 
+        # avatar display: graceful quit → terminate → kill
         if self._avatar_proc and self._avatar_proc.is_alive():
             self.state.send_command({"action": "quit"})
             self._avatar_proc.join(timeout=3)
             if self._avatar_proc.is_alive():
                 self._avatar_proc.terminate()
                 self._avatar_proc.join(timeout=2)
+            if self._avatar_proc.is_alive():
+                log.warning("Avatar process didn't terminate, force killing")
+                self._avatar_proc.kill()
+                self._avatar_proc.join(timeout=1)
+        self._avatar_proc = None
 
     def _init_tts(self) -> None:
         engine = self.config.tts.engine

@@ -18,6 +18,34 @@ from ..config import AvatarConfig
 from ..state import SharedState
 
 
+def _is_parent_alive(pid: int) -> bool:
+    """Check if a process is alive. Works on Windows, Linux, macOS.
+
+    NOTE: os.kill(pid, 0) is NOT safe on Windows — signal 0 == CTRL_C_EVENT,
+    so it broadcasts Ctrl+C to the process group and kills Claude Code.
+
+    Duplicated here (also in lifecycle.py) to avoid importing the heavy
+    lifecycle module into the lightweight display child process.
+    """
+    if sys.platform == "win32":
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        STILL_ACTIVE = 259
+        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            return False
+        exit_code = ctypes.c_ulong()
+        result = kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code))
+        kernel32.CloseHandle(handle)
+        return result != 0 and exit_code.value == STILL_ACTIVE
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
 class AvatarWindow(QWidget):
     def __init__(self, shared_state: SharedState, config: AvatarConfig):
         super().__init__()
@@ -27,6 +55,9 @@ class AvatarWindow(QWidget):
         self._drag_offset = QPoint()
         self._dragging = False
         self._sprites: dict[str, QPixmap] = {}
+        self._parent_pid = os.getppid()
+        self._poll_count = 0
+        self._state_failures = 0
 
         self._setup_window()
         self._load_sprites()
@@ -61,10 +92,25 @@ class AvatarWindow(QWidget):
 
     def _poll(self) -> None:
         """Read shared state and update display."""
+        self._poll_count += 1
+
+        # check if parent (MCP server) is alive every ~2 seconds
+        if self._poll_count % 40 == 0:
+            if not _is_parent_alive(self._parent_pid):
+                log.info("Parent process (pid=%s) is gone, shutting down", self._parent_pid)
+                QApplication.quit()
+                return
+
         try:
             snap = self._state.snapshot()
+            self._state_failures = 0
         except Exception:
-            log.debug("Failed to read shared state", exc_info=True)
+            self._state_failures += 1
+            # shared state dead for 5+ seconds — parent/Manager is gone
+            if self._state_failures > 100:
+                log.info("Shared state unreachable, shutting down")
+                QApplication.quit()
+                return
             return
 
         # visibility
@@ -179,13 +225,25 @@ def _read_stale_pid() -> int | None:
 
 
 def _kill_stale_holder(pid: int | None) -> None:
-    """Kill a stale avatar display process by PID."""
+    """Kill a stale avatar display process by PID.
+
+    Uses TerminateProcess directly on Windows to avoid os.kill signal pitfalls.
+    """
     if pid is None:
         return
-    import signal
     import time
     try:
-        os.kill(pid, signal.SIGTERM)
+        if sys.platform == "win32":
+            import ctypes
+            kernel32 = ctypes.windll.kernel32
+            PROCESS_TERMINATE = 0x0001
+            handle = kernel32.OpenProcess(PROCESS_TERMINATE, False, pid)
+            if handle:
+                kernel32.TerminateProcess(handle, 1)
+                kernel32.CloseHandle(handle)
+        else:
+            import signal
+            os.kill(pid, signal.SIGTERM)
         time.sleep(0.5)
     except OSError:
         pass

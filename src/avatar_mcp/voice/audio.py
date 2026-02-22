@@ -42,6 +42,14 @@ class AudioQueue:
         pygame.mixer.music.stop()
         self._playing = False
 
+    def shutdown(self) -> None:
+        """Stop playback and release pygame mixer resources."""
+        self.clear()
+        try:
+            pygame.mixer.quit()
+        except Exception:
+            pass
+
     def _loop(self) -> None:
         while True:
             path = self._queue.get()
