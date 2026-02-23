@@ -15,6 +15,7 @@ Runs as an [MCP server](https://modelcontextprotocol.io/) — Claude Code connec
   - **RealtimeSTT** (recommended) — Local Whisper model via faster-whisper, GPU-accelerated, real-time streaming, no API keys
   - **Google Speech API** — Cloud-based fallback, no GPU required, higher latency
 - **Emotion system** — 7 emotions (neutral, happy, sad, excited, angry, shy, smug) that affect avatar pose and voice prosody
+- **Automatic pose changes** — Avatar reacts to what Claude is doing (coding, thinking, planning, listening) via Claude Code hooks. No manual tool calls needed
 
 ## Why?
 
@@ -71,6 +72,57 @@ Add to your project's `.mcp.json` (or global MCP config):
 
 Restart Claude Code. The avatar window should appear and tools will be available.
 
+### Automatic Poses via Hooks (recommended)
+
+The avatar can change poses automatically based on what Claude is doing — no manual `set_pose()` calls needed. Add hooks to your Claude Code settings (`~/.claude/settings.json`):
+
+```json
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [{ "type": "command", "command": "echo thinking > \"$HOME/.claude/avatar-pose\"" }]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|NotebookEdit|Bash",
+        "hooks": [{ "type": "command", "command": "echo coding > \"$HOME/.claude/avatar-pose\"" }]
+      },
+      {
+        "matcher": "Read|Grep|Glob",
+        "hooks": [{ "type": "command", "command": "echo thinking > \"$HOME/.claude/avatar-pose\"" }]
+      },
+      {
+        "matcher": "Task|EnterPlanMode",
+        "hooks": [{ "type": "command", "command": "echo planning > \"$HOME/.claude/avatar-pose\"" }]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [{ "type": "command", "command": "echo listening > \"$HOME/.claude/avatar-pose\"" }]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [{ "type": "command", "command": "echo listening > \"$HOME/.claude/avatar-pose\"" }]
+      }
+    ]
+  }
+}
+```
+
+This maps avatar poses to Claude's activity:
+- **User sends message** → thinking pose (UserPromptSubmit)
+- **Edit/Write/Bash** → coding pose (PreToolUse)
+- **Read/Grep/Glob** → thinking pose (PreToolUse)
+- **Task/Plan mode** → planning pose (PreToolUse)
+- **Waiting for approval** → listening pose (PermissionRequest)
+- **Turn complete** → listening pose (Stop)
+- **speak(text, emotion)** → emotion-matched pose while speaking (built-in, no hook needed)
+
+The MCP server watches the `~/.claude/avatar-pose` file for changes and updates the avatar automatically.
+
 ### Auto-allow tools (optional)
 
 To skip approval prompts, add to `.claude/settings.local.json`:
@@ -80,8 +132,8 @@ To skip approval prompts, add to `.claude/settings.local.json`:
   "permissions": {
     "allow": [
       "mcp__avatar-mcp__speak",
-      "mcp__avatar-mcp__set_emotion",
-      "mcp__avatar-mcp__set_pose"
+      "mcp__avatar-mcp__show_avatar",
+      "mcp__avatar-mcp__hide_avatar"
     ]
   }
 }
@@ -134,9 +186,7 @@ Once connected, Claude Code has access to these tools:
 
 | Tool | Description |
 |------|-------------|
-| `speak(text, emotion)` | Speak text aloud with emotional prosody |
-| `set_emotion(emotion)` | Set avatar emotion (changes pose) |
-| `set_pose(pose)` | Directly set avatar pose |
+| `speak(text, emotion)` | Speak text aloud with emotional prosody. Shows emotion-matched pose while speaking |
 | `show_avatar()` | Show the avatar window |
 | `hide_avatar()` | Hide the avatar window |
 | `start_listening()` | Start speech recognition |
@@ -189,12 +239,22 @@ pip install -e ".[dev]"
 pytest tests/ -v
 ```
 
+## Process Cleanup
+
+The MCP server spawns several child processes (avatar display, multiprocessing Manager, STT workers). Multiple mechanisms ensure these are cleaned up when Claude Code exits:
+
+1. **Parent watchdog** — A daemon thread polls every 2s to check if the parent process (Claude Code) is alive. If the parent dies, all children are force-killed immediately. This is the most reliable mechanism since it doesn't depend on signals or atexit.
+2. **Job Objects** (Windows) — All child processes are assigned to a Win32 Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, so the OS kills them when the MCP server exits.
+3. **Display self-monitoring** — The avatar window checks its parent PID every ~2s and self-terminates if the parent is gone.
+4. **atexit + signal handlers** — Standard cleanup on normal interpreter shutdown and SIGINT/SIGTERM.
+5. **PID file** — `~/.claude/avatar-mcp-children.pid` tracks child PIDs for stale process cleanup on next startup.
+
 ## Architecture
 
 ```
 src/avatar_mcp/
-  server.py          # MCP server entry point
-  lifecycle.py       # Process lifecycle, TTS/STT initialization
+  server.py          # MCP server, pose file watcher, parent watchdog
+  lifecycle.py       # Process lifecycle, TTS/STT init, hook pose logic
   config.py          # TOML config parsing
   state.py           # Shared state (multiprocessing.Manager)
   avatar/

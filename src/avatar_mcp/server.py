@@ -55,6 +55,12 @@ def _force_cleanup() -> None:
         except Exception:
             pass
 
+    # clean up pose signal file
+    try:
+        _POSE_FILE.unlink(missing_ok=True)
+    except Exception:
+        pass
+
     # nuclear option: kill every remaining child process
     for child in multiprocessing.active_children():
         try:
@@ -95,6 +101,41 @@ def _start_parent_watchdog() -> None:
     t.start()
 
 
+_POSE_FILE = Path.home() / ".claude" / "avatar-pose"
+
+
+def _start_pose_watcher(lifecycle: Lifecycle) -> None:
+    """Watch ~/.claude/avatar-pose for hook-triggered pose changes.
+
+    Claude Code hooks write a pose name to this file:
+    - UserPromptSubmit → thinking
+    - PreToolUse → coding/thinking/planning (by tool matcher)
+    - PermissionRequest → listening (approval needed)
+    - Stop → listening (turn done)
+
+    No debounce needed — "listening" only comes from PermissionRequest and Stop,
+    not from a spammy catch-all PostToolUse.
+    """
+    def _watcher():
+        last_mtime = 0.0
+        while True:
+            time.sleep(0.1)
+            try:
+                if _POSE_FILE.exists():
+                    mtime = _POSE_FILE.stat().st_mtime
+                    if mtime != last_mtime:
+                        last_mtime = mtime
+                        pose = _POSE_FILE.read_text().strip()
+                        if pose in VALID_POSES:
+                            lifecycle.set_hook_pose(pose)
+            except Exception:
+                pass
+
+    t = threading.Thread(target=_watcher, daemon=True, name="pose-watcher")
+    t.start()
+    log.info("Pose file watcher started (%s)", _POSE_FILE)
+
+
 @dataclass
 class AppContext:
     config: AppConfig
@@ -121,6 +162,9 @@ async def app_lifespan(server: FastMCP):
     # Job Object + PID file — must run after start_all() so libraries
     # like RealtimeSTT have finished spawning their workers
     _assign_all_children()
+
+    # watch for hook-triggered pose changes
+    _start_pose_watcher(lifecycle)
 
     # store refs for atexit/signal cleanup
     _cleanup_refs["lifecycle"] = lifecycle
@@ -151,28 +195,6 @@ async def speak(text: str, emotion: str = "neutral") -> str:
     lc: Lifecycle = ctx.request_context.lifespan_context.lifecycle
     emotion = emotion if emotion in VALID_EMOTIONS else "neutral"
     return await lc.speak(text, emotion)
-
-
-@mcp.tool()
-async def set_emotion(emotion: str) -> str:
-    """Set the avatar's emotional state. Changes the displayed pose to match.
-    Valid emotions: neutral, happy, sad, excited, angry, shy, smug, bratty."""
-    ctx = mcp.get_context()
-    lc: Lifecycle = ctx.request_context.lifespan_context.lifecycle
-    if emotion not in VALID_EMOTIONS:
-        return f"Invalid emotion '{emotion}'. Valid: {', '.join(sorted(VALID_EMOTIONS))}"
-    return lc.set_emotion(emotion)
-
-
-@mcp.tool()
-async def set_pose(pose: str) -> str:
-    """Directly set the avatar's displayed pose.
-    Valid poses: idle, thinking, coding, angry, smug, shy, planning, speaking, listening, drag."""
-    ctx = mcp.get_context()
-    lc: Lifecycle = ctx.request_context.lifespan_context.lifecycle
-    if pose not in VALID_POSES:
-        return f"Invalid pose '{pose}'. Valid: {', '.join(sorted(VALID_POSES))}"
-    return lc.set_pose(pose)
 
 
 @mcp.tool()

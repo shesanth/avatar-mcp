@@ -249,6 +249,7 @@ class Lifecycle:
         self._stt = None  # SpeechListener, lazily imported
         self._sender: ClaudeCodeSender | None = None
         self._pose_gen: int = 0  # incremented on explicit set_pose, prevents speak on_done from clobbering
+        self._pending_hook_pose: str | None = None  # deferred hook pose when is_speaking
         self._stopped = False
 
     def start_all(self) -> None:
@@ -351,19 +352,31 @@ class Lifecycle:
     # --- public API for MCP tools ---
 
     async def speak(self, text: str, emotion: str) -> str:
-        # remember what we were doing before speaking so we can resume it
         pre_speak_pose = self.state.get("pose")
-        self.state.set_many(pose="speaking", emotion=emotion, is_speaking=True)
+
+        # Show emotion-mapped pose while speaking (angry, shy, smug, etc.)
+        # Only fall back to "speaking" sprite for neutral emotion
+        emotion_pose = EMOTION_POSE_MAP.get(emotion, "idle")
+        if emotion_pose == "idle":
+            emotion_pose = "speaking"
+        self.state.set_many(pose=emotion_pose, emotion=emotion, is_speaking=True)
 
         path = await self._tts.synthesize(text, emotion)
 
         gen_at_speak = self._pose_gen
+        self._pending_hook_pose = None  # clear any stale pending
 
         def on_done():
             self.state.set("is_speaking", False)
-            # restore pre-speak pose unless an explicit set_pose happened during speech
-            if self._pose_gen == gen_at_speak:
+            if self._pending_hook_pose:
+                # a hook fired during speech — apply the deferred pose
+                pose = self._pending_hook_pose
+                self._pending_hook_pose = None
+                self.state.set("pose", pose)
+            elif self._pose_gen == gen_at_speak:
+                # no explicit set_pose during speech — restore pre-speak
                 self.state.set("pose", pre_speak_pose)
+            # else: explicit set_pose() was called, don't overwrite
 
         self._audio.set_on_complete(on_done)
         self._audio.add(path)
@@ -378,8 +391,17 @@ class Lifecycle:
 
     def set_pose(self, pose: str) -> str:
         self._pose_gen += 1
+        self._pending_hook_pose = None  # explicit pose overrides pending hook
         self.state.set("pose", pose)
         return f"Pose set to {pose}"
+
+    def set_hook_pose(self, pose: str) -> None:
+        """Apply a pose from the hook file watcher. Defers if currently speaking."""
+        if self.state.get("is_speaking"):
+            self._pending_hook_pose = pose
+        else:
+            self._pending_hook_pose = None
+            self.set_pose(pose)
 
     def show_avatar(self) -> str:
         self.state.set("visible", True)

@@ -416,6 +416,105 @@ class TestParentWatchdog:
         )
 
 
+# ---------------------------------------------------------------------------
+# Hook-triggered pose changes
+# ---------------------------------------------------------------------------
+
+class TestHookPose:
+    def _make_lifecycle(self):
+        """Create a minimal Lifecycle with mocked state for testing."""
+        from avatar_mcp.lifecycle import Lifecycle
+        lc = object.__new__(Lifecycle)
+        lc._pose_gen = 0
+        lc._pending_hook_pose = None
+        lc._stopped = False
+        lc.state = MagicMock()
+        lc.state.get = MagicMock(return_value="idle")
+        return lc
+
+    def test_set_hook_pose_immediate_when_not_speaking(self):
+        """set_hook_pose should call set_pose immediately if not speaking."""
+        lc = self._make_lifecycle()
+        lc.state.get.return_value = False  # is_speaking = False
+        lc.set_hook_pose("coding")
+        lc.state.set.assert_called_with("pose", "coding")
+        assert lc._pending_hook_pose is None
+
+    def test_set_hook_pose_deferred_when_speaking(self):
+        """set_hook_pose should defer if is_speaking is True."""
+        lc = self._make_lifecycle()
+        lc.state.get.return_value = True  # is_speaking = True
+        lc.set_hook_pose("listening")
+        assert lc._pending_hook_pose == "listening"
+        # state.set should NOT have been called with "pose" for listening
+        # (it was called with "pose", "coding" would not be here)
+
+    def test_set_pose_clears_pending_hook(self):
+        """Explicit set_pose should clear pending hook pose."""
+        lc = self._make_lifecycle()
+        lc._pending_hook_pose = "listening"
+        lc.set_pose("coding")
+        assert lc._pending_hook_pose is None
+        assert lc._pose_gen == 1
+
+    def test_speak_emotion_pose_mapping(self):
+        """speak() should show emotion-mapped pose, not 'speaking', for non-neutral emotions."""
+        lifecycle_path = (
+            Path(__file__).resolve().parent.parent
+            / "src" / "avatar_mcp" / "lifecycle.py"
+        )
+        source = lifecycle_path.read_text()
+        # Check that speak() uses EMOTION_POSE_MAP
+        assert "EMOTION_POSE_MAP.get(emotion" in source, (
+            "speak() must use EMOTION_POSE_MAP to determine pose during speech"
+        )
+        # Check the fallback to "speaking" for neutral
+        assert 'emotion_pose = "speaking"' in source, (
+            "speak() must fall back to 'speaking' sprite for neutral emotion"
+        )
+
+    def test_pose_watcher_exists_in_server(self):
+        """server.py must have a pose file watcher."""
+        server_path = (
+            Path(__file__).resolve().parent.parent
+            / "src" / "avatar_mcp" / "server.py"
+        )
+        source = server_path.read_text()
+        assert "_start_pose_watcher" in source
+        assert "avatar-pose" in source
+        assert "pose-watcher" in source
+
+    def test_pose_watcher_validates_poses(self):
+        """Pose watcher should check against VALID_POSES."""
+        server_path = (
+            Path(__file__).resolve().parent.parent
+            / "src" / "avatar_mcp" / "server.py"
+        )
+        source = server_path.read_text()
+        assert "VALID_POSES" in source
+
+    def test_set_pose_and_set_emotion_tools_removed(self):
+        """set_pose and set_emotion MCP tools should not exist in server.py."""
+        server_path = (
+            Path(__file__).resolve().parent.parent
+            / "src" / "avatar_mcp" / "server.py"
+        )
+        source = server_path.read_text()
+        # The @mcp.tool() decorated functions should not exist
+        assert "async def set_pose(" not in source, (
+            "set_pose MCP tool should be removed"
+        )
+        assert "async def set_emotion(" not in source, (
+            "set_emotion MCP tool should be removed"
+        )
+
+    def test_lifecycle_methods_still_exist(self):
+        """Lifecycle.set_pose() and set_emotion() methods must remain (used internally)."""
+        from avatar_mcp.lifecycle import Lifecycle
+        assert hasattr(Lifecycle, "set_pose"), "Lifecycle.set_pose must exist"
+        assert hasattr(Lifecycle, "set_emotion"), "Lifecycle.set_emotion must exist"
+
+
 class TestSignalHandlerRegistration:
     def test_server_registers_sigint(self):
         """server.py main() must register SIGINT handler."""
