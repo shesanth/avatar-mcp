@@ -28,7 +28,7 @@ logging.basicConfig(
     format="%(asctime)s %(name)s | %(message)s",
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler(str(_log_file), mode="w"),
+        logging.FileHandler(str(_log_file), mode="a"),
     ],
 )
 log = logging.getLogger("avatar-mcp")

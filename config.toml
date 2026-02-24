@@ -24,7 +24,7 @@ wake_words = ["claude", "hey claude"]
 # realtime engine (faster-whisper via RealtimeSTT)
 realtime_model = "base"        # tiny / base / small / medium / large-v3
 realtime_device = "cuda"       # "cuda" or "cpu"
-realtime_silero_sensitivity = 0.4
+realtime_silero_sensitivity = 0.7
 # google engine (fallback — ignored when engine = "realtime")
 energy_threshold = 150
 phrase_threshold = 0.1

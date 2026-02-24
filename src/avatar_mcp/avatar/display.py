@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
 import sys
+import time
 from pathlib import Path
 
 from PyQt6.QtCore import QPoint, QTimer, Qt
@@ -58,6 +60,15 @@ class AvatarWindow(QWidget):
         self._parent_pid = os.getppid()
         self._poll_count = 0
         self._state_failures = 0
+
+        # animation state
+        self._anim_t0 = time.monotonic()
+        self._bob_amplitude = 3          # pixels of breathing bob
+        self._bob_period = 3.0           # seconds per breath cycle
+        self._bounce_t0: float | None = None  # set on pose change
+        self._bounce_duration = 0.3      # seconds for pose-change bounce
+        self._bounce_amplitude = 6       # pixels for initial bounce
+        self._sprite_h = 0               # cached sprite height for widget padding
 
         self._setup_window()
         self._load_sprites()
@@ -125,10 +136,37 @@ class AvatarWindow(QWidget):
             if new_pose != self._current_pose:
                 self._set_pose(new_pose)
 
+        # animate: breathing bob + pose-change bounce
+        if not self._dragging:
+            self._animate()
+
         # commands
         cmd = self._state.poll_command()
         if cmd:
             self._handle_command(cmd)
+
+    def _animate(self) -> None:
+        """Move the sprite label inside the widget for breathing + bounce."""
+        now = time.monotonic()
+        padding = self._bob_amplitude + self._bounce_amplitude
+
+        # breathing: gentle sine wave
+        phase = (now - self._anim_t0) / self._bob_period * 2 * math.pi
+        bob_offset = math.sin(phase) * self._bob_amplitude
+
+        # pose-change bounce: damped spring that decays to zero
+        bounce_offset = 0.0
+        if self._bounce_t0 is not None:
+            elapsed = now - self._bounce_t0
+            if elapsed < self._bounce_duration:
+                # fast sine, exponential decay
+                t = elapsed / self._bounce_duration
+                bounce_offset = math.sin(t * math.pi * 3) * self._bounce_amplitude * (1 - t)
+            else:
+                self._bounce_t0 = None
+
+        y = int(padding + bob_offset + bounce_offset)
+        self._label.move(0, y)
 
     def _set_pose(self, pose: str) -> None:
         pixmap = self._sprites.get(pose, self._sprites.get("idle"))
@@ -145,8 +183,13 @@ class AvatarWindow(QWidget):
         )
         self._label.setPixmap(scaled)
         self._label.resize(scaled.size())
-        self.resize(scaled.size())
+        self._sprite_h = h
+        # extra vertical room for bob + bounce so the widget doesn't clip
+        padding = self._bob_amplitude + self._bounce_amplitude
+        self.resize(w, h + padding * 2)
         self._current_pose = pose
+        # trigger bounce on pose change
+        self._bounce_t0 = time.monotonic()
 
     def _handle_command(self, cmd: dict) -> None:
         action = cmd.get("action")
