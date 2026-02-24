@@ -15,6 +15,7 @@ class AvatarConfig:
     sprite_scale: float = 1.0
     sprite_directory: str = ""
     poll_interval_ms: int = 50
+    edge_snap_px: int = 30  # snap to screen edge when dragged within this many pixels
 
 
 @dataclass

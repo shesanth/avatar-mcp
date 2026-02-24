@@ -94,7 +94,28 @@ class AvatarWindow(QWidget):
         for pose, path in paths.items():
             pm = QPixmap(str(path))
             if not pm.isNull():
-                self._sprites[pose] = pm
+                self._sprites[pose] = self._trim_transparent(pm)
+
+    @staticmethod
+    def _trim_transparent(pm: QPixmap) -> QPixmap:
+        """Remove transparent borders so the widget matches visible content."""
+        img = pm.toImage()
+        w, h = img.width(), img.height()
+        left, top, right, bottom = w, h, 0, 0
+        for y in range(h):
+            for x in range(w):
+                if img.pixelColor(x, y).alpha() > 0:
+                    if x < left:
+                        left = x
+                    if x > right:
+                        right = x
+                    if y < top:
+                        top = y
+                    if y > bottom:
+                        bottom = y
+        if right < left:
+            return pm
+        return pm.copy(left, top, right - left + 1, bottom - top + 1)
 
     def _start_polling(self) -> None:
         self._timer = QTimer(self)
@@ -211,14 +232,54 @@ class AvatarWindow(QWidget):
     def mouseReleaseEvent(self, event) -> None:
         if self._dragging:
             self._dragging = False
-            pos = self.pos()
-            self._state.set_many(position_x=pos.x(), position_y=pos.y())
-            # restore pose from state
+            # restore pose FIRST (changes widget size), THEN snap with final dimensions
             try:
                 self._set_pose(self._state.get("pose"))
             except Exception:
                 log.debug("Failed to restore pose after drag", exc_info=True)
                 self._set_pose("idle")
+            self._snap_to_edge()
+            pos = self.pos()
+            self._state.set_many(position_x=pos.x(), position_y=pos.y())
+
+    def _snap_to_edge(self) -> None:
+        """Snap the avatar to the nearest edge of whichever screen it's on."""
+        snap = self._config.edge_snap_px
+        if snap <= 0:
+            return
+
+        # find which screen the avatar center is on
+        center = self.geometry().center()
+        screen = QApplication.screenAt(center)
+        if screen is None:
+            screen = QApplication.primaryScreen()
+        if screen is None:
+            print("[snap] no screen found!", flush=True)
+            return
+        # use x/y/width/height to avoid Qt's off-by-one right()/bottom()
+        sg = screen.availableGeometry()
+        sl, st = sg.x(), sg.y()
+        sr, sb = sl + sg.width(), st + sg.height()
+
+        x, y = self.pos().x(), self.pos().y()
+        w, h = self.width(), self.height()
+
+        # clamp: keep widget fully within this screen
+        x = max(sl, min(x, sr - w))
+        y = max(st, min(y, sb - h))
+
+        # snap: magnetic pull to edges within threshold
+        if x - sl < snap:
+            x = sl
+        elif sr - (x + w) < snap:
+            x = sr - w
+
+        if y - st < snap:
+            y = st
+        elif sb - (y + h) < snap:
+            y = sb - h
+
+        self.move(x, y)
 
     # --- context menu ---
 
@@ -338,8 +399,22 @@ def _release_lock() -> None:
 
 def run_avatar_display(shared_state: SharedState, config: AvatarConfig) -> None:
     """Entry point for the avatar child process."""
+    # child process on Windows has no console — redirect stdout/stderr to log
+    _log_path = Path.home() / ".claude" / "avatar-display.log"
+    try:
+        _log_fh = open(_log_path, "a", encoding="utf-8")
+        sys.stdout = _log_fh
+        sys.stderr = _log_fh
+    except OSError:
+        sys.stdout = open(os.devnull, "w")
+        sys.stderr = open(os.devnull, "w")
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format="%(asctime)s %(name)s | %(message)s",
+        handlers=[logging.StreamHandler(sys.stderr)],
+    )
     if not _acquire_lock():
-        print("avatar-mcp: another instance is already running", file=sys.stderr)
+        log.warning("another avatar display instance is already running")
         return
     try:
         app = QApplication(sys.argv)
